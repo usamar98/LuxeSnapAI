@@ -89,17 +89,25 @@ function providerReady(initialState: InitialDashboardState) {
 function cameraErrorMessage(error: unknown) {
   if (error instanceof DOMException) {
     if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
-      return "Camera permission was blocked. Allow camera access or upload a selfie file.";
+      return "Camera is blocked for this site. On PC, click the lock or tune icon in the address bar, set Camera to Allow, reload the page, then try Take photo again.";
     }
 
     if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
-      return "No camera was found on this device. Upload a selfie file instead.";
+      return "No camera was found on this device. Plug in or enable a webcam, or use Upload file.";
+    }
+
+    if (error.name === "NotReadableError" || error.name === "TrackStartError") {
+      return "Your camera is already in use by another app. Close Zoom, Teams, or the Camera app, then try again.";
+    }
+
+    if (error.name === "SecurityError") {
+      return "Camera is blocked by browser security. Open LuxeSnap AI directly in a secure browser tab and allow camera access.";
     }
   }
 
   return error instanceof Error
     ? error.message
-    : "Camera permission was blocked or no camera was found.";
+    : "Camera could not start. Check browser camera permissions or use Upload file.";
 }
 
 export function LuxeSnapApp({
