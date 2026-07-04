@@ -451,25 +451,27 @@ export function LuxeSnapApp({
                 }}
               />
 
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  type="button"
-                  variant={isCameraOpen ? "secondary" : "default"}
-                  disabled={isCameraStarting}
-                  onClick={isCameraOpen ? stopCamera : startCamera}
-                >
-                  {isCameraStarting ? (
-                    <Loader2Icon data-icon="inline-start" className="animate-spin" />
-                  ) : (
-                    <CameraIcon data-icon="inline-start" />
-                  )}
-                  {isCameraOpen ? "Close camera" : "Take photo"}
-                </Button>
-                <Button type="button" variant="outline" onClick={openFilePicker}>
-                  <ImagePlusIcon data-icon="inline-start" />
-                  Upload file
-                </Button>
-              </div>
+              {previewUrl || isCameraOpen ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant={isCameraOpen ? "secondary" : "default"}
+                    disabled={isCameraStarting}
+                    onClick={isCameraOpen ? stopCamera : startCamera}
+                  >
+                    {isCameraStarting ? (
+                      <Loader2Icon data-icon="inline-start" className="animate-spin" />
+                    ) : (
+                      <CameraIcon data-icon="inline-start" />
+                    )}
+                    {isCameraOpen ? "Close camera" : "Take photo"}
+                  </Button>
+                  <Button type="button" variant="outline" onClick={openFilePicker}>
+                    <ImagePlusIcon data-icon="inline-start" />
+                    Upload file
+                  </Button>
+                </div>
+              ) : null}
 
               {isCameraOpen ? (
                 <Button type="button" variant="secondary" onClick={captureCameraSelfie}>
