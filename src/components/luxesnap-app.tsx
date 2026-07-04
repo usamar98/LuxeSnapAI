@@ -86,6 +86,22 @@ function providerReady(initialState: InitialDashboardState) {
   );
 }
 
+function cameraErrorMessage(error: unknown) {
+  if (error instanceof DOMException) {
+    if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+      return "Camera permission was blocked. Allow camera access or upload a selfie file.";
+    }
+
+    if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
+      return "No camera was found on this device. Upload a selfie file instead.";
+    }
+  }
+
+  return error instanceof Error
+    ? error.message
+    : "Camera permission was blocked or no camera was found.";
+}
+
 export function LuxeSnapApp({
   initialState,
 }: {
@@ -138,6 +154,11 @@ export function LuxeSnapApp({
     setIsCameraStarting(false);
   }
 
+  function openFilePicker() {
+    stopCamera();
+    fileInputRef.current?.click();
+  }
+
   function handleFileChange(nextFile: File | null) {
     setFile(nextFile);
     setMessage(null);
@@ -178,11 +199,7 @@ export function LuxeSnapApp({
         await videoRef.current.play().catch(() => undefined);
       }
     } catch (error) {
-      setCameraError(
-        error instanceof Error
-          ? error.message
-          : "Camera permission was blocked or no camera was found."
-      );
+      setCameraError(cameraErrorMessage(error));
       stopCamera();
     } finally {
       setIsCameraStarting(false);
@@ -388,24 +405,45 @@ export function LuxeSnapApp({
                     className="h-full w-full object-cover"
                   />
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex h-full w-full flex-col items-center justify-center gap-3 p-8 text-center"
-                  >
-                    <ImagePlusIcon className="text-muted-foreground" />
-                    <span className="text-sm font-medium">Upload or capture selfie</span>
-                    <span className="text-xs text-muted-foreground">
-                      Use a file or take a live camera photo
-                    </span>
-                  </button>
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-4 p-6 text-center">
+                    <div className="flex size-12 items-center justify-center rounded-lg border border-border bg-background/80 text-muted-foreground">
+                      <CameraIcon />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm font-medium">Add a selfie</span>
+                      <span className="text-xs text-muted-foreground">
+                        Take a live photo or choose an image file
+                      </span>
+                    </div>
+                    <div className="grid w-full max-w-64 grid-cols-1 gap-2 sm:grid-cols-2">
+                      <Button
+                        type="button"
+                        disabled={isCameraStarting}
+                        onClick={startCamera}
+                      >
+                        {isCameraStarting ? (
+                          <Loader2Icon
+                            data-icon="inline-start"
+                            className="animate-spin"
+                          />
+                        ) : (
+                          <CameraIcon data-icon="inline-start" />
+                        )}
+                        Take photo
+                      </Button>
+                      <Button type="button" variant="outline" onClick={openFilePicker}>
+                        <ImagePlusIcon data-icon="inline-start" />
+                        Upload file
+                      </Button>
+                    </div>
+                  </div>
                 )}
               </div>
               <canvas ref={canvasRef} className="hidden" />
               <Input
                 ref={fileInputRef}
                 type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
+                accept="image/*"
                 className="hidden"
                 onChange={(event) => {
                   stopCamera();
@@ -416,15 +454,7 @@ export function LuxeSnapApp({
               <div className="grid grid-cols-2 gap-2">
                 <Button
                   type="button"
-                  variant="outline"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <ImagePlusIcon data-icon="inline-start" />
-                  Upload
-                </Button>
-                <Button
-                  type="button"
-                  variant={isCameraOpen ? "secondary" : "outline"}
+                  variant={isCameraOpen ? "secondary" : "default"}
                   disabled={isCameraStarting}
                   onClick={isCameraOpen ? stopCamera : startCamera}
                 >
@@ -433,14 +463,18 @@ export function LuxeSnapApp({
                   ) : (
                     <CameraIcon data-icon="inline-start" />
                   )}
-                  {isCameraOpen ? "Close camera" : "Use camera"}
+                  {isCameraOpen ? "Close camera" : "Take photo"}
+                </Button>
+                <Button type="button" variant="outline" onClick={openFilePicker}>
+                  <ImagePlusIcon data-icon="inline-start" />
+                  Upload file
                 </Button>
               </div>
 
               {isCameraOpen ? (
                 <Button type="button" variant="secondary" onClick={captureCameraSelfie}>
                   <CameraIcon data-icon="inline-start" />
-                  Capture live selfie
+                  Capture selfie
                 </Button>
               ) : null}
 
@@ -482,7 +516,7 @@ export function LuxeSnapApp({
                   ? "Sign in to generate"
                   : file
                     ? "Generate luxury edit"
-                    : "Upload selfie"}
+                    : "Add selfie"}
               </Button>
 
               <div className="flex flex-col gap-2">
