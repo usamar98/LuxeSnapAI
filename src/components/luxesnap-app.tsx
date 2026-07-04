@@ -89,19 +89,23 @@ function providerReady(initialState: InitialDashboardState) {
 function cameraErrorMessage(error: unknown) {
   if (error instanceof DOMException) {
     if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
-      return "Camera is blocked for this site. On PC, click the lock or tune icon in the address bar, set Camera to Allow, reload the page, then try Take photo again.";
+      return "Camera is blocked for this site. Tap the browser camera icon or open site settings, allow Camera, reload, then try Take photo again.";
     }
 
     if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
-      return "No camera was found on this device. Plug in or enable a webcam, or use Upload file.";
+      return "No camera was found. Enable a webcam, use your phone camera, or choose Upload file.";
     }
 
     if (error.name === "NotReadableError" || error.name === "TrackStartError") {
-      return "Your camera is already in use by another app. Close Zoom, Teams, or the Camera app, then try again.";
+      return "The browser cannot start the webcam. Close other camera apps, check Windows camera privacy settings, then try again or use Upload file.";
+    }
+
+    if (error.name === "OverconstrainedError" || error.name === "ConstraintNotSatisfiedError") {
+      return "This camera does not support the requested selfie mode. Try again or use Upload file.";
     }
 
     if (error.name === "SecurityError") {
-      return "Camera is blocked by browser security. Open LuxeSnap AI directly in a secure browser tab and allow camera access.";
+      return "Camera is blocked by browser security. Open LuxeSnap AI directly in a secure HTTPS browser tab and allow camera access.";
     }
   }
 
@@ -110,6 +114,27 @@ function cameraErrorMessage(error: unknown) {
     : "Camera could not start. Check browser camera permissions or use Upload file.";
 }
 
+const cameraConstraints: MediaStreamConstraints[] = [
+  {
+    audio: false,
+    video: {
+      facingMode: "user",
+      width: { ideal: 1280 },
+      height: { ideal: 1600 },
+    },
+  },
+  {
+    audio: false,
+    video: {
+      facingMode: "user",
+    },
+  },
+  {
+    audio: false,
+    video: true,
+  },
+];
+
 export function LuxeSnapApp({
   initialState,
 }: {
@@ -117,6 +142,7 @@ export function LuxeSnapApp({
 }) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const mobileCaptureInputRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
@@ -167,6 +193,11 @@ export function LuxeSnapApp({
     fileInputRef.current?.click();
   }
 
+  function openMobileCameraPicker() {
+    stopCamera();
+    mobileCaptureInputRef.current?.click();
+  }
+
   function handleFileChange(nextFile: File | null) {
     setFile(nextFile);
     setMessage(null);
@@ -190,14 +221,30 @@ export function LuxeSnapApp({
 
     try {
       stopCamera();
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: "user",
-          width: { ideal: 1280 },
-          height: { ideal: 1600 },
-        },
-      });
+      let lastError: unknown = null;
+      let stream: MediaStream | null = null;
+
+      for (const constraints of cameraConstraints) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+          break;
+        } catch (error) {
+          lastError = error;
+
+          if (
+            error instanceof DOMException &&
+            (error.name === "NotAllowedError" ||
+              error.name === "PermissionDeniedError" ||
+              error.name === "SecurityError")
+          ) {
+            break;
+          }
+        }
+      }
+
+      if (!stream) {
+        throw lastError ?? new Error("Camera could not start.");
+      }
 
       cameraStreamRef.current = stream;
       setIsCameraOpen(true);
@@ -342,21 +389,21 @@ export function LuxeSnapApp({
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex min-h-screen w-full max-w-[1480px] flex-col gap-5 px-4 py-4 sm:px-6 lg:px-8">
-        <header className="flex flex-col gap-4 rounded-lg border border-border bg-card/70 p-3 shadow-2xl shadow-black/20 backdrop-blur md:flex-row md:items-center md:justify-between">
+      <div className="mx-auto flex min-h-screen w-full max-w-[1480px] flex-col gap-3 px-3 py-3 sm:gap-5 sm:px-6 sm:py-4 lg:px-8">
+        <header className="flex flex-col gap-3 rounded-lg border border-border bg-card/70 p-3 shadow-2xl shadow-black/20 backdrop-blur md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-lg border border-primary/25 bg-primary text-primary-foreground">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary text-primary-foreground sm:size-10">
               <CrownIcon />
             </div>
             <div>
-              <p className="text-xl font-semibold">LuxeSnap AI</p>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-lg font-semibold sm:text-xl">LuxeSnap AI</p>
+              <p className="text-xs text-muted-foreground sm:text-sm">
                 Luxury scene editor for creator-grade AI photos
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
             <Badge variant="secondary" className="gap-1">
               <CoinsIcon data-icon="inline-start" />
               {credits} credits
@@ -392,7 +439,7 @@ export function LuxeSnapApp({
             <CardContent className="flex flex-col gap-5">
               <div
                 className={cn(
-                  "relative flex aspect-[4/5] w-full overflow-hidden rounded-lg border border-dashed border-border bg-muted text-left transition",
+                  "relative flex aspect-[5/6] max-h-[520px] w-full overflow-hidden rounded-lg border border-dashed border-border bg-muted text-left transition sm:aspect-[4/5]",
                   previewUrl && !isCameraOpen && "border-primary/40",
                   isCameraOpen && "border-primary/60"
                 )}
@@ -413,7 +460,7 @@ export function LuxeSnapApp({
                     className="h-full w-full object-cover"
                   />
                 ) : (
-                  <div className="flex h-full w-full flex-col items-center justify-center gap-4 p-6 text-center">
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-5 text-center sm:gap-4 sm:p-6">
                     <div className="flex size-12 items-center justify-center rounded-lg border border-border bg-background/80 text-muted-foreground">
                       <CameraIcon />
                     </div>
@@ -423,9 +470,10 @@ export function LuxeSnapApp({
                         Take a live photo or choose an image file
                       </span>
                     </div>
-                    <div className="grid w-full max-w-64 grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div className="grid w-full max-w-72 grid-cols-1 gap-2 sm:grid-cols-2">
                       <Button
                         type="button"
+                        className="h-11"
                         disabled={isCameraStarting}
                         onClick={startCamera}
                       >
@@ -439,7 +487,21 @@ export function LuxeSnapApp({
                         )}
                         Take photo
                       </Button>
-                      <Button type="button" variant="outline" onClick={openFilePicker}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-11 sm:hidden"
+                        onClick={openMobileCameraPicker}
+                      >
+                        <CameraIcon data-icon="inline-start" />
+                        Phone camera
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-11"
+                        onClick={openFilePicker}
+                      >
                         <ImagePlusIcon data-icon="inline-start" />
                         Upload file
                       </Button>
@@ -458,12 +520,24 @@ export function LuxeSnapApp({
                   handleFileChange(event.target.files?.item(0) ?? null);
                 }}
               />
+              <Input
+                ref={mobileCaptureInputRef}
+                type="file"
+                accept="image/*"
+                capture="user"
+                className="hidden"
+                onChange={(event) => {
+                  stopCamera();
+                  handleFileChange(event.target.files?.item(0) ?? null);
+                }}
+              />
 
               {previewUrl || isCameraOpen ? (
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <Button
                     type="button"
                     variant={isCameraOpen ? "secondary" : "default"}
+                    className="h-11"
                     disabled={isCameraStarting}
                     onClick={isCameraOpen ? stopCamera : startCamera}
                   >
@@ -474,24 +548,55 @@ export function LuxeSnapApp({
                     )}
                     {isCameraOpen ? "Close camera" : "Take photo"}
                   </Button>
-                  <Button type="button" variant="outline" onClick={openFilePicker}>
+                  <Button type="button" variant="outline" className="h-11" onClick={openFilePicker}>
                     <ImagePlusIcon data-icon="inline-start" />
                     Upload file
                   </Button>
+                  {!isCameraOpen ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 sm:hidden"
+                      onClick={openMobileCameraPicker}
+                    >
+                      <CameraIcon data-icon="inline-start" />
+                      Phone camera
+                    </Button>
+                  ) : null}
                 </div>
               ) : null}
 
               {isCameraOpen ? (
-                <Button type="button" variant="secondary" onClick={captureCameraSelfie}>
+                <Button type="button" variant="secondary" className="h-11" onClick={captureCameraSelfie}>
                   <CameraIcon data-icon="inline-start" />
                   Capture selfie
                 </Button>
               ) : null}
 
               {cameraError ? (
-                <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-                  {cameraError}
-                </p>
+                <div className="flex flex-col gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                  <p>{cameraError}</p>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <Button type="button" size="sm" onClick={startCamera}>
+                      <CameraIcon data-icon="inline-start" />
+                      Try again
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={openFilePicker}>
+                      <ImagePlusIcon data-icon="inline-start" />
+                      Upload file
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="sm:hidden"
+                      onClick={openMobileCameraPicker}
+                    >
+                      <CameraIcon data-icon="inline-start" />
+                      Phone camera
+                    </Button>
+                  </div>
+                </div>
               ) : null}
 
               <FieldGroup>
@@ -515,7 +620,7 @@ export function LuxeSnapApp({
                 size="lg"
                 disabled={!canGenerate}
                 onClick={handleGenerate}
-                className="h-11"
+                className="h-12 sm:h-11"
               >
                 {isGenerating ? (
                   <Loader2Icon data-icon="inline-start" className="animate-spin" />
@@ -569,17 +674,17 @@ export function LuxeSnapApp({
                   const next = value[0];
                   if (next) setSceneId(next as SceneId);
                 }}
-                className="grid w-full grid-cols-1 items-stretch gap-3 md:grid-cols-2 xl:grid-cols-3"
+                className="flex w-full snap-x snap-mandatory items-stretch gap-3 overflow-x-auto pb-2 md:grid md:grid-cols-2 md:overflow-visible md:pb-0 xl:grid-cols-3"
               >
                 {luxuryScenes.map((scene) => (
                   <ToggleGroupItem
                     key={scene.id}
                     value={scene.id}
                     variant="outline"
-                    className="h-auto min-h-40 justify-start overflow-hidden border-border bg-card p-0 text-left aria-pressed:border-primary/70 aria-pressed:bg-primary/10"
+                    className="h-auto min-h-32 w-48 shrink-0 snap-start justify-start overflow-hidden border-border bg-card p-0 text-left aria-pressed:border-primary/70 aria-pressed:bg-primary/10 md:min-h-40 md:w-auto"
                   >
                     <span
-                      className="relative flex min-h-40 w-full flex-col justify-end overflow-hidden rounded-lg bg-cover"
+                      className="relative flex min-h-32 w-full flex-col justify-end overflow-hidden rounded-lg bg-cover md:min-h-40"
                       style={{
                         backgroundImage: "url('/assets/luxury-scenes.png')",
                         backgroundSize: "300% 200%",
@@ -611,7 +716,7 @@ export function LuxeSnapApp({
                       value={[styleId]}
                       onValueChange={(value) => {
                         const next = value[0];
-                  if (next) setStyleId(next as StylePresetId);
+                        if (next) setStyleId(next as StylePresetId);
                       }}
                       className="grid w-full grid-cols-2 gap-2"
                     >
@@ -637,9 +742,9 @@ export function LuxeSnapApp({
                       value={[aspectRatio]}
                       onValueChange={(value) => {
                         const next = value[0];
-                  if (next) setAspectRatio(next as AspectRatio);
+                        if (next) setAspectRatio(next as AspectRatio);
                       }}
-                      className="grid w-full grid-cols-5 gap-1"
+                      className="grid w-full grid-cols-3 gap-1 sm:grid-cols-5"
                       spacing={1}
                     >
                       {aspectRatios.map((ratio) => (
@@ -657,7 +762,7 @@ export function LuxeSnapApp({
                 </FieldGroup>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-3">
+              <div className="hidden gap-3 sm:grid md:grid-cols-3">
                 <div className="rounded-lg border border-border bg-muted/35 p-4">
                   <PlaneIcon className="mb-3 text-primary" />
                   <p className="text-sm font-medium">{selectedScene.name}</p>
@@ -727,7 +832,7 @@ export function LuxeSnapApp({
                       </div>
                     )}
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                  <div className="grid grid-cols-1 gap-2 text-xs text-muted-foreground sm:grid-cols-2">
                     <div className="rounded-lg border border-border bg-muted/35 p-3">
                       Scene
                       <p className="mt-1 text-sm font-medium text-foreground">
