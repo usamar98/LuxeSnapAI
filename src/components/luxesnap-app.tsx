@@ -17,6 +17,11 @@ import {
 } from "lucide-react";
 
 import type { DashboardJob, InitialDashboardState } from "@/lib/app-types";
+import {
+  MAX_SELFIE_SIZE_BYTES,
+  isSupportedMimeType,
+  type SupportedMimeType,
+} from "@/lib/generation";
 import { creditPacks } from "@/lib/plans";
 import {
   aspectRatios,
@@ -114,6 +119,105 @@ function cameraErrorMessage(error: unknown) {
     : "Camera could not start. Check browser camera permissions or use Upload file.";
 }
 
+const imageMimeTypesByExtension: Record<string, SupportedMimeType> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  gif: "image/gif",
+};
+
+function fileExtension(file: File) {
+  return file.name.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function withInferredMimeType(file: File) {
+  if (file.type) return file;
+
+  const mimeType = imageMimeTypesByExtension[fileExtension(file)];
+  return mimeType
+    ? new File([file], file.name, {
+        type: mimeType,
+        lastModified: file.lastModified,
+      })
+    : file;
+}
+
+function loadLocalImage(file: File) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("This photo format could not be opened in your browser."));
+    };
+    image.src = url;
+  });
+}
+
+async function normalizeSelfieFile(originalFile: File) {
+  const file = withInferredMimeType(originalFile);
+  const extension = fileExtension(file);
+  const isApplePhoto =
+    file.type === "image/heic" ||
+    file.type === "image/heif" ||
+    extension === "heic" ||
+    extension === "heif";
+
+  if (isSupportedMimeType(file.type) && file.size <= MAX_SELFIE_SIZE_BYTES) {
+    return file;
+  }
+
+  if (!isApplePhoto && file.size <= MAX_SELFIE_SIZE_BYTES) {
+    throw new Error("Use a JPG, PNG, WebP, GIF, HEIC, or HEIF selfie.");
+  }
+
+  let image: HTMLImageElement;
+
+  try {
+    image = await loadLocalImage(file);
+  } catch {
+    if (isApplePhoto) {
+      throw new Error(
+        "This browser could not convert the iPhone photo. Take a new picture with Phone camera, or switch iPhone Camera Formats to Most Compatible."
+      );
+    }
+
+    throw new Error("This large photo could not be optimized. Choose another image.");
+  }
+
+  const maxDimension = 2400;
+  const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext("2d");
+
+  if (!context) {
+    throw new Error("This photo could not be prepared for upload.");
+  }
+
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, "image/jpeg", 0.9);
+  });
+
+  if (!blob || blob.size > MAX_SELFIE_SIZE_BYTES) {
+    throw new Error("This photo is still too large. Choose an image under 10 MB.");
+  }
+
+  const baseName = file.name.replace(/\.[^.]+$/, "") || "selfie";
+  return new File([blob], baseName + ".jpg", {
+    type: "image/jpeg",
+    lastModified: Date.now(),
+  });
+}
+
 const cameraConstraints: MediaStreamConstraints[] = [
   {
     audio: false,
@@ -154,6 +258,7 @@ export function LuxeSnapApp({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [isCameraStarting, setIsCameraStarting] = useState(false);
+  const [isPreparingSelfie, setIsPreparingSelfie] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(
     initialState.jobs.find((job) => job.outputUrl)?.outputUrl ?? null
@@ -168,7 +273,9 @@ export function LuxeSnapApp({
   const selectedScene = useMemo(() => getScene(sceneId), [sceneId]);
   const selectedStyle = useMemo(() => getStylePreset(styleId), [styleId]);
   const needsAuth = !initialState.user;
-  const canGenerate = Boolean(file && initialState.user && liveReady && !isGenerating);
+  const canGenerate = Boolean(
+    file && initialState.user && liveReady && !isGenerating && !isPreparingSelfie
+  );
 
   useEffect(() => {
     return () => {
@@ -198,16 +305,36 @@ export function LuxeSnapApp({
     mobileCaptureInputRef.current?.click();
   }
 
-  function handleFileChange(nextFile: File | null) {
-    setFile(nextFile);
+  async function handleFileChange(nextFile: File | null) {
     setMessage(null);
     setCameraError(null);
 
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
+    if (!nextFile) {
+      setFile(null);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+      return;
     }
 
-    setPreviewUrl(nextFile ? URL.createObjectURL(nextFile) : null);
+    setIsPreparingSelfie(true);
+
+    try {
+      const normalizedFile = await normalizeSelfieFile(nextFile);
+      setFile(normalizedFile);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(URL.createObjectURL(normalizedFile));
+
+      if (normalizedFile !== nextFile) {
+        setMessage("Photo optimized for a reliable upload.");
+      }
+    } catch (error) {
+      setFile(null);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+      setMessage(error instanceof Error ? error.message : "Photo could not be prepared.");
+    } finally {
+      setIsPreparingSelfie(false);
+    }
   }
 
   async function startCamera() {
@@ -296,7 +423,7 @@ export function LuxeSnapApp({
           { type: "image/jpeg" }
         );
 
-        handleFileChange(capturedFile);
+        void handleFileChange(capturedFile);
         stopCamera();
         setMessage("Camera selfie captured. Choose a scene and generate.");
       },
@@ -404,23 +531,23 @@ export function LuxeSnapApp({
           </div>
 
           <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-            <Badge variant="secondary" className="gap-1">
+            <Badge variant="secondary" className="col-span-2 min-h-11 justify-center gap-1 sm:col-span-1 sm:min-h-0">
               <CoinsIcon data-icon="inline-start" />
               {credits} credits
             </Badge>
-            <Button variant="outline" onClick={() => handleCheckout("creator")}>
+            <Button variant="outline" className="h-11 w-full sm:h-8 sm:w-auto" onClick={() => handleCheckout("creator")}>
               <SparklesIcon data-icon="inline-start" />
               Buy credits
             </Button>
             {initialState.user ? (
-              <form action="/auth/sign-out" method="post">
-                <Button type="submit" variant="ghost">
+              <form action="/auth/sign-out" method="post" className="w-full sm:w-auto">
+                <Button type="submit" variant="ghost" className="h-11 w-full sm:h-8 sm:w-auto">
                   <LogOutIcon data-icon="inline-start" />
                   Sign out
                 </Button>
               </form>
             ) : (
-              <Button onClick={() => router.push("/auth/login")}>
+              <Button className="h-11 w-full sm:h-8 sm:w-auto" onClick={() => router.push("/auth/login")}>
                 <LockIcon data-icon="inline-start" />
                 Sign in
               </Button>
@@ -428,7 +555,7 @@ export function LuxeSnapApp({
           </div>
         </header>
 
-        <section className="grid flex-1 gap-5 lg:grid-cols-[330px_minmax(0,1fr)_360px]">
+        <section className="grid flex-1 gap-5 xl:grid-cols-[300px_minmax(0,1fr)_330px] 2xl:grid-cols-[330px_minmax(0,1fr)_360px]">
           <Card className="border-border/80 bg-card/82 shadow-2xl shadow-black/25">
             <CardHeader>
               <CardTitle>Source</CardTitle>
@@ -439,7 +566,7 @@ export function LuxeSnapApp({
             <CardContent className="flex flex-col gap-5">
               <div
                 className={cn(
-                  "relative flex aspect-[5/6] max-h-[520px] w-full overflow-hidden rounded-lg border border-dashed border-border bg-muted text-left transition sm:aspect-[4/5]",
+                  "relative mx-auto flex aspect-[5/6] max-h-[520px] w-full max-w-md overflow-hidden rounded-lg border border-dashed border-border bg-muted text-left transition sm:aspect-[4/5]",
                   previewUrl && !isCameraOpen && "border-primary/40",
                   isCameraOpen && "border-primary/60"
                 )}
@@ -517,7 +644,8 @@ export function LuxeSnapApp({
                 className="hidden"
                 onChange={(event) => {
                   stopCamera();
-                  handleFileChange(event.target.files?.item(0) ?? null);
+                  void handleFileChange(event.target.files?.item(0) ?? null);
+                  event.target.value = "";
                 }}
               />
               <Input
@@ -528,7 +656,8 @@ export function LuxeSnapApp({
                 className="hidden"
                 onChange={(event) => {
                   stopCamera();
-                  handleFileChange(event.target.files?.item(0) ?? null);
+                  void handleFileChange(event.target.files?.item(0) ?? null);
+                  event.target.value = "";
                 }}
               />
 
@@ -577,11 +706,11 @@ export function LuxeSnapApp({
                 <div className="flex flex-col gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
                   <p>{cameraError}</p>
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <Button type="button" size="sm" onClick={startCamera}>
+                    <Button type="button" size="sm" className="h-11 sm:h-7" onClick={startCamera}>
                       <CameraIcon data-icon="inline-start" />
                       Try again
                     </Button>
-                    <Button type="button" size="sm" variant="outline" onClick={openFilePicker}>
+                    <Button type="button" size="sm" variant="outline" className="h-11 sm:h-7" onClick={openFilePicker}>
                       <ImagePlusIcon data-icon="inline-start" />
                       Upload file
                     </Button>
@@ -589,7 +718,7 @@ export function LuxeSnapApp({
                       type="button"
                       size="sm"
                       variant="outline"
-                      className="sm:hidden"
+                      className="h-11 sm:hidden"
                       onClick={openMobileCameraPicker}
                     >
                       <CameraIcon data-icon="inline-start" />
@@ -622,16 +751,18 @@ export function LuxeSnapApp({
                 onClick={handleGenerate}
                 className="h-12 sm:h-11"
               >
-                {isGenerating ? (
+                {isGenerating || isPreparingSelfie ? (
                   <Loader2Icon data-icon="inline-start" className="animate-spin" />
                 ) : (
                   <WandSparklesIcon data-icon="inline-start" />
                 )}
-                {needsAuth
-                  ? "Sign in to generate"
-                  : file
-                    ? "Generate luxury edit"
-                    : "Add selfie"}
+                {isPreparingSelfie
+                  ? "Preparing selfie"
+                  : needsAuth
+                    ? "Sign in to generate"
+                    : file
+                      ? "Generate luxury edit"
+                      : "Add selfie"}
               </Button>
 
               <div className="flex flex-col gap-2">
@@ -725,7 +856,7 @@ export function LuxeSnapApp({
                           key={style.id}
                           value={style.id}
                           variant="outline"
-                          className="justify-start aria-pressed:border-primary/70 aria-pressed:bg-primary/10"
+                          className="min-h-11 justify-start aria-pressed:border-primary/70 aria-pressed:bg-primary/10 sm:min-h-8"
                         >
                           {style.name}
                         </ToggleGroupItem>
@@ -752,7 +883,7 @@ export function LuxeSnapApp({
                           key={ratio}
                           value={ratio}
                           variant="outline"
-                          className="px-1.5 aria-pressed:border-primary/70 aria-pressed:bg-primary/10"
+                          className="min-h-11 px-1.5 aria-pressed:border-primary/70 aria-pressed:bg-primary/10 sm:min-h-8"
                         >
                           {ratio}
                         </ToggleGroupItem>
@@ -797,14 +928,14 @@ export function LuxeSnapApp({
             </CardHeader>
             <CardContent>
               <Tabs defaultValue="preview" className="gap-5">
-                <TabsList className="w-full">
+                <TabsList className="h-11 w-full sm:h-8">
                   <TabsTrigger value="preview">Preview</TabsTrigger>
                   <TabsTrigger value="history">History</TabsTrigger>
                   <TabsTrigger value="credits">Credits</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="preview" className="flex flex-col gap-4">
-                  <div className="relative flex aspect-[4/5] overflow-hidden rounded-lg border border-border bg-muted">
+                  <div className="relative mx-auto flex aspect-[4/5] w-full max-w-md overflow-hidden rounded-lg border border-border bg-muted">
                     {resultUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
@@ -883,7 +1014,7 @@ export function LuxeSnapApp({
                       key={pack.id}
                       type="button"
                       onClick={() => handleCheckout(pack.id)}
-                      className="flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/30 p-3 text-left transition hover:border-primary/60 hover:bg-primary/10"
+                      className="flex min-h-12 items-center justify-between gap-4 rounded-lg border border-border bg-muted/30 p-3 text-left transition hover:border-primary/60 hover:bg-primary/10"
                     >
                       <span>
                         <span className="block text-sm font-medium">{pack.name}</span>
