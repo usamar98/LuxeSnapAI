@@ -72,6 +72,23 @@ async function uploadGeneratedImage(input: {
   };
 }
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+
+  return "Generation failed.";
+}
+
 export async function POST(request: Request) {
   const providers = getProviderStatus();
 
@@ -151,22 +168,6 @@ export async function POST(request: Request) {
       cost_cents: FAL_IMAGE_COST_CENTS,
     });
 
-    const { error: uploadError } = await admin.storage
-      .from("selfies")
-      .upload(sourcePath, selfie, {
-        contentType: selfie.type,
-        upsert: false,
-      });
-
-    if (uploadError) {
-      throw uploadError;
-    }
-
-    await admin
-      .from("generation_jobs")
-      .update({ status: "analyzing", source_path: sourcePath })
-      .eq("id", jobId);
-
     const { data: balanceAfterCharge, error: creditError } = await supabase.rpc(
       "consume_credit_for_generation",
       {
@@ -182,6 +183,22 @@ export async function POST(request: Request) {
     }
 
     creditConsumed = true;
+
+    const { error: uploadError } = await admin.storage
+      .from("selfies")
+      .upload(sourcePath, selfie, {
+        contentType: selfie.type,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    await admin
+      .from("generation_jobs")
+      .update({ status: "analyzing", source_path: sourcePath })
+      .eq("id", jobId);
 
     const bytes = Buffer.from(await selfie.arrayBuffer());
     const analysis = await analyzeSelfie({
@@ -258,7 +275,8 @@ export async function POST(request: Request) {
       job: completedJob,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Generation failed.";
+    const message = getErrorMessage(error);
+    const status = message.toLowerCase().includes("insufficient credits") ? 402 : 500;
 
     if (creditConsumed) {
       await admin.rpc("refund_credit_for_failed_generation", {
@@ -274,6 +292,6 @@ export async function POST(request: Request) {
       .update({ status: "failed", error: message })
       .eq("id", jobId);
 
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status });
   }
 }

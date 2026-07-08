@@ -14,6 +14,7 @@ import {
   PlaneIcon,
   SparklesIcon,
   WandSparklesIcon,
+  XIcon,
 } from "lucide-react";
 
 import type { DashboardJob, InitialDashboardState } from "@/lib/app-types";
@@ -221,17 +222,7 @@ async function normalizeSelfieFile(originalFile: File) {
 const cameraConstraints: MediaStreamConstraints[] = [
   {
     audio: false,
-    video: {
-      facingMode: "user",
-      width: { ideal: 1280 },
-      height: { ideal: 1600 },
-    },
-  },
-  {
-    audio: false,
-    video: {
-      facingMode: "user",
-    },
+    video: { facingMode: { ideal: "user" } },
   },
   {
     audio: false,
@@ -273,9 +264,7 @@ export function LuxeSnapApp({
   const selectedScene = useMemo(() => getScene(sceneId), [sceneId]);
   const selectedStyle = useMemo(() => getStylePreset(styleId), [styleId]);
   const needsAuth = !initialState.user;
-  const canGenerate = Boolean(
-    file && initialState.user && liveReady && !isGenerating && !isPreparingSelfie
-  );
+  const isGenerateBusy = isGenerating || isPreparingSelfie;
 
   useEffect(() => {
     return () => {
@@ -447,6 +436,11 @@ export function LuxeSnapApp({
       return;
     }
 
+    if (credits < 1) {
+      await handleCheckout("starter");
+      return;
+    }
+
     setIsGenerating(true);
     setMessage(null);
     setProgress(28);
@@ -530,12 +524,19 @@ export function LuxeSnapApp({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-            <Badge variant="secondary" className="col-span-2 min-h-11 justify-center gap-1 sm:col-span-1 sm:min-h-0">
+          <div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)] gap-2 sm:flex sm:flex-wrap sm:items-center">
+            <Badge
+              variant="secondary"
+              className="min-h-11 justify-center gap-1 px-2 sm:min-h-0"
+            >
               <CoinsIcon data-icon="inline-start" />
-              {credits} credits
+              {initialState.user ? `${credits} credits` : "Credits"}
             </Badge>
-            <Button variant="outline" className="h-11 w-full sm:h-8 sm:w-auto" onClick={() => handleCheckout("creator")}>
+            <Button
+              variant="outline"
+              className="h-11 min-w-0 w-full px-2 sm:h-8 sm:w-auto"
+              onClick={() => handleCheckout("creator")}
+            >
               <SparklesIcon data-icon="inline-start" />
               Buy credits
             </Button>
@@ -555,8 +556,8 @@ export function LuxeSnapApp({
           </div>
         </header>
 
-        <section className="grid flex-1 gap-5 xl:grid-cols-[300px_minmax(0,1fr)_330px] 2xl:grid-cols-[330px_minmax(0,1fr)_360px]">
-          <Card className="border-border/80 bg-card/82 shadow-2xl shadow-black/25">
+        <section className="grid items-start gap-4 sm:gap-5 xl:grid-cols-[300px_minmax(0,1fr)_330px] 2xl:grid-cols-[330px_minmax(0,1fr)_360px]">
+          <Card className="h-fit overflow-visible border-border/80 bg-card/82 shadow-2xl shadow-black/25">
             <CardHeader>
               <CardTitle>Source</CardTitle>
               <CardDescription>
@@ -565,26 +566,56 @@ export function LuxeSnapApp({
             </CardHeader>
             <CardContent className="flex flex-col gap-5">
               <div
+                data-camera-open={isCameraOpen ? "true" : "false"}
                 className={cn(
-                  "relative mx-auto flex aspect-[5/6] max-h-[520px] w-full max-w-md overflow-hidden rounded-lg border border-dashed border-border bg-muted text-left transition sm:aspect-[4/5]",
+                  "relative mx-auto flex w-full overflow-hidden border border-dashed border-border bg-muted text-left transition",
+                  isCameraOpen
+                    ? "fixed inset-0 z-50 h-[100svh] max-h-none max-w-none bg-black border-0 rounded-none sm:relative sm:inset-auto sm:z-auto sm:aspect-[3/4] sm:h-auto sm:max-h-[640px] sm:max-w-md sm:rounded-lg sm:border"
+                    : "aspect-[3/4] max-h-[min(70svh,640px)] max-w-md rounded-lg",
                   previewUrl && !isCameraOpen && "border-primary/40",
-                  isCameraOpen && "border-primary/60"
+                  isCameraOpen && "sm:border-primary/60"
                 )}
               >
                 {isCameraOpen ? (
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    className="h-full w-full scale-x-[-1] object-cover"
-                  />
+                  <>
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="h-full w-full scale-x-[-1] bg-black object-contain"
+                    />
+                    <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center bg-black/45 px-5 pb-8 pt-[calc(env(safe-area-inset-top)+1rem)] text-center text-sm text-white sm:hidden">
+                      Keep your full head and shoulders inside the frame
+                    </div>
+                    <div className="absolute inset-x-0 bottom-0 grid grid-cols-[1fr_auto] gap-3 bg-black/55 px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-8 backdrop-blur-sm sm:hidden">
+                      <Button
+                        type="button"
+                        size="lg"
+                        className="h-14"
+                        onClick={captureCameraSelfie}
+                      >
+                        <CameraIcon data-icon="inline-start" />
+                        Capture selfie
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon-lg"
+                        variant="secondary"
+                        className="size-14"
+                        onClick={stopCamera}
+                        aria-label="Close camera"
+                      >
+                        <XIcon />
+                      </Button>
+                    </div>
+                  </>
                 ) : previewUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={previewUrl}
                     alt="Selected selfie preview"
-                    className="h-full w-full object-cover"
+                    className="h-full w-full bg-black/35 object-contain"
                   />
                 ) : (
                   <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-5 text-center sm:gap-4 sm:p-6">
@@ -696,7 +727,12 @@ export function LuxeSnapApp({
               ) : null}
 
               {isCameraOpen ? (
-                <Button type="button" variant="secondary" className="h-11" onClick={captureCameraSelfie}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="hidden h-11 sm:inline-flex"
+                  onClick={captureCameraSelfie}
+                >
                   <CameraIcon data-icon="inline-start" />
                   Capture selfie
                 </Button>
@@ -747,9 +783,9 @@ export function LuxeSnapApp({
 
               <Button
                 size="lg"
-                disabled={!canGenerate}
+                disabled={isGenerateBusy}
                 onClick={handleGenerate}
-                className="h-12 sm:h-11"
+                className="h-12 w-full sm:h-11"
               >
                 {isGenerating || isPreparingSelfie ? (
                   <Loader2Icon data-icon="inline-start" className="animate-spin" />
@@ -760,9 +796,13 @@ export function LuxeSnapApp({
                   ? "Preparing selfie"
                   : needsAuth
                     ? "Sign in to generate"
-                    : file
-                      ? "Generate luxury edit"
-                      : "Add selfie"}
+                    : !file
+                      ? "Add selfie to generate"
+                      : !liveReady
+                        ? "Check generation setup"
+                        : credits < 1
+                          ? "Buy credits to generate"
+                          : "Generate luxury edit"}
               </Button>
 
               <div className="flex flex-col gap-2">
@@ -783,7 +823,7 @@ export function LuxeSnapApp({
             </CardContent>
           </Card>
 
-          <Card className="border-border/80 bg-card/82 shadow-2xl shadow-black/25">
+          <Card className="h-fit overflow-visible border-border/80 bg-card/82 shadow-2xl shadow-black/25">
             <CardHeader className="gap-2">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -805,14 +845,14 @@ export function LuxeSnapApp({
                   const next = value[0];
                   if (next) setSceneId(next as SceneId);
                 }}
-                className="flex w-full snap-x snap-mandatory items-stretch gap-3 overflow-x-auto pb-2 md:grid md:grid-cols-2 md:overflow-visible md:pb-0 xl:grid-cols-3"
+                className="grid w-full grid-cols-2 items-stretch gap-2 sm:grid-cols-3 md:gap-3"
               >
                 {luxuryScenes.map((scene) => (
                   <ToggleGroupItem
                     key={scene.id}
                     value={scene.id}
                     variant="outline"
-                    className="h-auto min-h-32 w-48 shrink-0 snap-start justify-start overflow-hidden border-border bg-card p-0 text-left aria-pressed:border-primary/70 aria-pressed:bg-primary/10 md:min-h-40 md:w-auto"
+                    className="h-auto min-h-32 w-auto min-w-0 justify-start overflow-hidden border-border bg-card p-0 text-left aria-pressed:border-primary/70 aria-pressed:bg-primary/10 md:min-h-40"
                   >
                     <span
                       className="relative flex min-h-32 w-full flex-col justify-end overflow-hidden rounded-lg bg-cover md:min-h-40"
@@ -919,7 +959,7 @@ export function LuxeSnapApp({
             </CardContent>
           </Card>
 
-          <Card className="border-border/80 bg-card/82 shadow-2xl shadow-black/25">
+          <Card className="h-fit overflow-visible border-border/80 bg-card/82 shadow-2xl shadow-black/25">
             <CardHeader>
               <CardTitle>Output</CardTitle>
               <CardDescription>
@@ -935,13 +975,16 @@ export function LuxeSnapApp({
                 </TabsList>
 
                 <TabsContent value="preview" className="flex flex-col gap-4">
-                  <div className="relative mx-auto flex aspect-[4/5] w-full max-w-md overflow-hidden rounded-lg border border-border bg-muted">
+                  <div
+                    className="relative mx-auto flex w-full max-w-md overflow-hidden rounded-lg border border-border bg-muted"
+                    style={{ aspectRatio: aspectRatio.replace(":", " / ") }}
+                  >
                     {resultUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={resultUrl}
                         alt="Generated LuxeSnap AI result"
-                        className="h-full w-full object-cover"
+                        className="h-full w-full bg-black/35 object-contain"
                       />
                     ) : (
                       <div
