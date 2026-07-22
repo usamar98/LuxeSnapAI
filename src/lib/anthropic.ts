@@ -13,6 +13,37 @@ const analysisSchema = z.object({
 
 export type SelfieAnalysis = z.infer<typeof analysisSchema>;
 
+const analysisOutputFormat = {
+  type: "json_schema",
+  schema: {
+    type: "object",
+    properties: {
+      identityNotes: { type: "string", minLength: 8 },
+      lighting: { type: "string", minLength: 4 },
+      camera: { type: "string", minLength: 4 },
+      styling: { type: "string", minLength: 4 },
+      safetyNotes: { type: "string" },
+    },
+    required: [
+      "identityNotes",
+      "lighting",
+      "camera",
+      "styling",
+      "safetyNotes",
+    ],
+    additionalProperties: false,
+  },
+} satisfies Anthropic.Messages.JSONOutputFormat;
+
+const fallbackAnalysis = {
+  identityNotes:
+    "Preserve the same face shape, skin texture, hairstyle, expression, and natural proportions from the selfie without over-smoothing.",
+  lighting: "Match face lighting to the new luxury scene with realistic shadows.",
+  camera: "Use a natural portrait lens and believable perspective.",
+  styling: "Keep personal style close to the source image while upgrading wardrobe subtly.",
+  safetyNotes: "Do not add logos, text, watermarks, or celebrity resemblance.",
+} satisfies SelfieAnalysis;
+
 let anthropicClient: Anthropic | null = null;
 
 function getAnthropic() {
@@ -37,6 +68,18 @@ function extractJsonObject(text: string) {
   return match ? match[0] : text;
 }
 
+export function parseSelfieAnalysis(rawText: string): SelfieAnalysis {
+  try {
+    const parsed = analysisSchema.safeParse(
+      JSON.parse(extractJsonObject(rawText))
+    );
+
+    return parsed.success ? parsed.data : fallbackAnalysis;
+  } catch {
+    return fallbackAnalysis;
+  }
+}
+
 export async function analyzeSelfie(input: {
   base64: string;
   mimeType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
@@ -48,6 +91,9 @@ export async function analyzeSelfie(input: {
   const message = await client.messages.create({
     model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
     max_tokens: 700,
+    output_config: {
+      format: analysisOutputFormat,
+    },
     system:
       "You are a production photo direction assistant. Analyze the uploaded selfie only for visual traits needed to preserve the same person in an AI edit. Do not identify the person, infer sensitive attributes, or name anyone. Return compact JSON only.",
     messages: [
@@ -77,18 +123,5 @@ export async function analyzeSelfie(input: {
   });
 
   const rawText = extractText(message.content);
-  const parsed = analysisSchema.safeParse(JSON.parse(extractJsonObject(rawText)));
-
-  if (!parsed.success) {
-    return {
-      identityNotes:
-        "Preserve the same face shape, skin texture, hairstyle, expression, and natural proportions from the selfie without over-smoothing.",
-      lighting: "Match face lighting to the new luxury scene with realistic shadows.",
-      camera: "Use a natural portrait lens and believable perspective.",
-      styling: "Keep personal style close to the source image while upgrading wardrobe subtly.",
-      safetyNotes: "Do not add logos, text, watermarks, or celebrity resemblance.",
-    } satisfies SelfieAnalysis;
-  }
-
-  return parsed.data;
+  return parseSelfieAnalysis(rawText);
 }
